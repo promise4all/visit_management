@@ -1,10 +1,10 @@
 {
  "creation": "2025-11-03 00:06:47.377990",
- "currency": "NGN",
+ "currency": "",
  "docstatus": 0,
  "doctype": "Number Card",
  "document_type": "Visit",
- "dynamic_filters_json": "[\n [\n  \"Visit\",\n  \"assigned_to\",\n  \"=\",\n  \"frappe.session.user\"\n ],\n [\n  \"Visit\",\n  \"scheduled_time\",\n  ">=",\n  \"frappe.datetime.month_start()\"\n ],\n [\n  \"Visit\",\n  \"scheduled_time\",\n  "<=",\n  \"frappe.datetime.now_datetime()\"\n ]\n]",
+ "dynamic_filters_json": "[[\"Visit\",\"assigned_to\",\"=\",\"frappe.session.user\"],[\"Visit\",\"scheduled_time\",\">=\",\"frappe.datetime.month_start()\"],[\"Visit\",\"scheduled_time\",\"<=\",\"frappe.datetime.now_datetime()\"]]",
  "filters_json": "[[\"Visit\",\"status\",\"=\",\"Planned\"]]",
  "function": "Count",
  "idx": 0,
