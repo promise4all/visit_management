@@ -17,7 +17,7 @@ build-backend = "flit_core.buildapi"
 [project.optional-dependencies]
 apps = [
     "frappe>=15,<16",
-    "crm>=15,<16",
+    "crm",
     "erpnext>=15,<16",
     "hrms>=15,<16",
 ]
