@@ -64,3 +64,9 @@ fixtures = [
     {"dt": "Dashboard Chart", "filters": [["module", "=", "Visit Management"]]},
     {"dt": "Custom HTML Block", "filters": [["name", "=", "Visits KPI Panel"]]},
 ]
+
+# Ensure workspace, number cards, chart, and custom HTML panel are present after install/migrate
+after_install = "visit_management.utils.setup_visit_workspace_and_metrics"
+after_migrate = [
+    "visit_management.utils.setup_visit_workspace_and_metrics",
+]
