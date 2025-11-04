@@ -179,24 +179,27 @@ def setup_visit_workspace_and_metrics():
             })
             doc.insert(ignore_permissions=True)
         else:
-            # Upsert dynamic filters and keep static filters in sync (non-destructive)
-            doc = frappe.get_doc("Number Card", c["name"])
-            doc.update({
-                "label": c["label"],
-                "module": "Visit Management",
-                "document_type": "Visit",
-                "type": "Document Type",
-                "function": "Count",
-                "filters_json": c["filters_json"],
-                "dynamic_filters_json": frappe.as_json(
-                    overdue_dynamic_filters if c["name"] == "Overdue Visits" else common_dynamic_filters
-                ),
-                "is_standard": 1,
-                "is_public": 1,
-                "show_percentage_stats": 1,
-                "stats_time_interval": "Daily",
-            })
-            doc.save(ignore_permissions=True)
+            # If a standard doc already exists, don't edit it to avoid validation errors.
+            try:
+                doc = frappe.get_doc("Number Card", c["name"])
+                if int(doc.get("is_standard") or 0) != 1:
+                    doc.update({
+                        "label": c["label"],
+                        "module": "Visit Management",
+                        "document_type": "Visit",
+                        "type": "Document Type",
+                        "function": "Count",
+                        "filters_json": c["filters_json"],
+                        "dynamic_filters_json": frappe.as_json(
+                            overdue_dynamic_filters if c["name"] == "Overdue Visits" else common_dynamic_filters
+                        ),
+                        "show_percentage_stats": 1,
+                        "stats_time_interval": "Daily",
+                    })
+                    doc.save(ignore_permissions=True)
+            except Exception:
+                # best-effort; skip on validation issues
+                pass
 
     # Dashboard Chart: Visits Created
     chart_name = "Visits Created"
@@ -221,23 +224,26 @@ def setup_visit_workspace_and_metrics():
         })
         chart.insert(ignore_permissions=True)
     else:
-        chart = frappe.get_doc("Dashboard Chart", chart_name)
-        chart.update({
-            "document_type": "Visit",
-            "based_on": "creation",
-            "chart_type": "Count",
-            "type": "Bar",
-            "timeseries": 1,
-            "timespan": "Last Month",
-            "time_interval": "Daily",
-            "is_standard": 1,
-            "is_public": 1,
-            "filters_json": "[]",
-            "dynamic_filters_json": frappe.as_json([["Visit", "assigned_to", "=", "frappe.session.user"]]),
-            # remove any accidental currency so tooltip shows numbers
-            "currency": "",
-        })
-        chart.save(ignore_permissions=True)
+        # Avoid editing standard charts; only update if not marked standard
+        try:
+            chart = frappe.get_doc("Dashboard Chart", chart_name)
+            if int(chart.get("is_standard") or 0) != 1:
+                chart.update({
+                    "document_type": "Visit",
+                    "based_on": "creation",
+                    "chart_type": "Count",
+                    "type": "Bar",
+                    "timeseries": 1,
+                    "timespan": "Last Month",
+                    "time_interval": "Daily",
+                    "filters_json": "[]",
+                    "dynamic_filters_json": frappe.as_json([["Visit", "assigned_to", "=", "frappe.session.user"]]),
+                    # remove any accidental currency so tooltip shows numbers
+                    "currency": "",
+                })
+                chart.save(ignore_permissions=True)
+        except Exception:
+            pass
 
     # Dashboard
     dash_name = "Visit Overview"
@@ -567,22 +573,26 @@ def setup_visit_workspace_and_metrics():
         })
         ws.insert(ignore_permissions=True)
     else:
-        ws = frappe.get_doc("Workspace", ws_name)
-        ws.update({
-            "label": ws_name,
-            "title": ws_name,
-            "module": "Visit Management",
-            "public": 1,
-            "is_standard": 1,
-            "icon": "map-pin",
-            "content": workspace_content,
-        })
-        # Update child tables
-        ws.set("shortcuts", workspace_shortcuts)
-        ws.set("number_cards", workspace_cards)
-        ws.set("charts", [{"chart_name": chart_name, "label": chart_name}])
-        ws.set("custom_blocks", [{"custom_block_name": chb_name, "label": chb_name}])
-        ws.save(ignore_permissions=True)
+        # Avoid editing standard workspace on migrate; only update if non-standard
+        try:
+            ws = frappe.get_doc("Workspace", ws_name)
+            if int(ws.get("is_standard") or 0) != 1:
+                ws.update({
+                    "label": ws_name,
+                    "title": ws_name,
+                    "module": "Visit Management",
+                    "public": 1,
+                    "icon": "map-pin",
+                    "content": workspace_content,
+                })
+                # Update child tables
+                ws.set("shortcuts", workspace_shortcuts)
+                ws.set("number_cards", workspace_cards)
+                ws.set("charts", [{"chart_name": chart_name, "label": chart_name}])
+                ws.set("custom_blocks", [{"custom_block_name": chb_name, "label": chb_name}])
+                ws.save(ignore_permissions=True)
+        except Exception:
+            pass
 
     frappe.clear_cache()
     # Upsert client custom fields and the frequency-overdue number card after workspace/chart setup
@@ -615,19 +625,21 @@ def _upsert_frequency_overdue_number_card():
 
     name = new_name
     if frappe.db.exists("Number Card", name):
-        doc = frappe.get_doc("Number Card", name)
-        doc.update({
-            "label": name,
-            "type": "Custom",
-            "method": "visit_management.utils.get_frequency_overdue_count",
-            "is_standard": 1,
-            "is_public": 1,
-            "show_percentage_stats": 0,
-            "filters_json": "[]",
-            "dynamic_filters_json": "[]",
-            "currency": "",
-        })
-        doc.save(ignore_permissions=True)
+        try:
+            doc = frappe.get_doc("Number Card", name)
+            if int(doc.get("is_standard") or 0) != 1:
+                doc.update({
+                    "label": name,
+                    "type": "Custom",
+                    "method": "visit_management.utils.get_frequency_overdue_count",
+                    "show_percentage_stats": 0,
+                    "filters_json": "[]",
+                    "dynamic_filters_json": "[]",
+                    "currency": "",
+                })
+                doc.save(ignore_permissions=True)
+        except Exception:
+            pass
     else:
         frappe.get_doc({
             "doctype": "Number Card",
