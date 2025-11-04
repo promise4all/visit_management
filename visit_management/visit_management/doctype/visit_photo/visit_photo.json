@@ -1,0 +1,11 @@
+{
+ "doctype": "DocType",
+ "name": "Visit Photo",
+ "module": "Visit Management",
+ "custom": 0,
+ "istable": 1,
+ "fields": [
+  {"fieldname": "image", "label": "Image", "fieldtype": "Attach Image", "reqd": 1},
+  {"fieldname": "caption", "label": "Caption", "fieldtype": "Data"}
+ ]
+}

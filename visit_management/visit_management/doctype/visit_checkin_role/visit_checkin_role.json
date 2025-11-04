@@ -1,0 +1,10 @@
+{
+ "doctype": "DocType",
+ "name": "Visit Checkin Role",
+ "module": "Visit Management",
+ "custom": 0,
+ "istable": 1,
+ "fields": [
+  {"fieldname": "role", "label": "Role", "fieldtype": "Link", "options": "Role", "reqd": 1}
+ ]
+}

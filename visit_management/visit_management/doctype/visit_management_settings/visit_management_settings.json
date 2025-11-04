@@ -1,0 +1,27 @@
+{
+ "doctype": "DocType",
+ "name": "Visit Management Settings",
+ "module": "Visit Management",
+ "custom": 0,
+ "istable": 0,
+ "issingle": 1,
+ "fields": [
+  {"fieldname": "sb_general", "label": "General", "fieldtype": "Section Break"},
+  {"fieldname": "enable_hr_integration", "label": "Enable HR Integration", "fieldtype": "Check", "default": 1},
+  {"fieldname": "require_photo_for_checkin", "label": "Require Photo for Check-in", "fieldtype": "Check", "default": 1},
+  {"fieldname": "require_photo_for_checkout", "label": "Require Photo for Check-out", "fieldtype": "Check", "default": 1},
+  {"fieldname": "require_geolocation", "label": "Require Geolocation on Completion", "fieldtype": "Check", "default": 0},
+  {"fieldname": "default_visit_duration", "label": "Default Visit Duration (minutes)", "fieldtype": "Int", "default": 60},
+  {"fieldname": "auto_create_visits_from_schedule", "label": "Auto-create Visits from Weekly Schedule", "fieldtype": "Check", "default": 1},
+  {"fieldname": "enable_visit_notifications", "label": "Enable Visit Notifications", "fieldtype": "Check", "default": 1},
+  {"fieldname": "sb_images", "label": "Images", "fieldtype": "Section Break"},
+  {"fieldname": "enable_image_compression", "label": "Enable Image Compression", "fieldtype": "Check", "default": 1},
+  {"fieldname": "image_max_dimension", "label": "Image Max Dimension (px)", "fieldtype": "Int", "default": 1280, "depends_on": "eval:doc.enable_image_compression==1"},
+  {"fieldname": "image_quality", "label": "Image Quality (%)", "fieldtype": "Int", "default": 80, "depends_on": "eval:doc.enable_image_compression==1"},
+    {"fieldname": "sb_permissions", "label": "Check-in Policy", "fieldtype": "Section Break"},
+    {"fieldname": "allowed_checkin_roles", "label": "Roles Exempt from Check-in", "fieldtype": "Table", "options": "Visit Checkin Role", "description": "Users with any of these roles (performing the action) may complete visits without Check-in, allowing back-office teams to close visits on behalf of field executives. Others must Check-in before completion."}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1}
+ ]
+}

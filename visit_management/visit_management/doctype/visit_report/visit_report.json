@@ -1,0 +1,19 @@
+{
+ "doctype": "DocType",
+ "name": "Visit Report",
+ "module": "Visit Management",
+ "custom": 0,
+ "istable": 0,
+ "is_submittable": 0,
+ "read_only": 1,
+ "fields": [
+  {"fieldname": "visit", "label": "Visit", "fieldtype": "Link", "options": "Visit", "reqd": 1},
+  {"fieldname": "summary", "label": "Summary", "fieldtype": "Small Text"},
+  {"fieldname": "attachments", "label": "Attachments", "fieldtype": "Attach"}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1},
+  {"role": "Sales Manager", "read": 1},
+  {"role": "Sales User", "read": 1}
+ ]
+}

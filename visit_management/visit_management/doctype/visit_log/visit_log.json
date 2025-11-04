@@ -1,0 +1,17 @@
+{
+ "doctype": "DocType",
+ "name": "Visit Log",
+ "module": "Visit Management",
+ "custom": 0,
+ "istable": 1,
+ "field_order": [
+  "timestamp",
+  "activity",
+  "user"
+ ],
+ "fields": [
+  {"fieldname": "timestamp", "fieldtype": "Datetime", "in_list_view": 1, "label": "Timestamp", "reqd": 1, "default": "Now"},
+  {"fieldname": "activity", "fieldtype": "Text", "in_list_view": 1, "label": "Activity", "reqd": 1},
+  {"fieldname": "user", "fieldtype": "Link", "in_list_view": 1, "label": "User", "options": "User", "reqd": 1}
+ ]
+}

@@ -1,0 +1,5 @@
+graft visit_management
+graft visit_management/doctype
+recursive-include visit_management *.json
+recursive-include visit_management *.py
+global-exclude *.pyc
