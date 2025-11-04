@@ -1,4 +1,4 @@
-from __future__ annotations
+from __future__ import annotations
 
 from frappe.model.document import Document
 
