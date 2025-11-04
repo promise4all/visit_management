@@ -188,7 +188,7 @@ class Visit(Document):
 		Returns Employee name or throws if not found.
 		"""
 		user = self.assigned_to or frappe.session.user
-	temp = frappe.db.get_value("Employee", {"user_id": user}, "name")
+		emp = frappe.db.get_value("Employee", {"user_id": user}, "name")
 		if not emp:
 			frappe.throw("No Employee linked to user {0}. Please link an Employee to proceed.".format(user))
 		return emp
