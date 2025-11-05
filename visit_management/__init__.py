@@ -1,4 +1,4 @@
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
 # Bridge: ensure imports of visit_management.visit_management.doctype resolve to the deep package
 import sys as _sys
