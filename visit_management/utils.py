@@ -94,7 +94,8 @@ def check_imports():
         pass
     # Inspect doctype package path and listdir
     try:
-        import importlib, os
+        import importlib
+        import os
         pkg = importlib.import_module("visit_management.visit_management.doctype")
         pkg_path = os.path.dirname(pkg.__file__)
         out["doctype_pkg_path"] = pkg_path
@@ -172,7 +173,8 @@ def setup_visit_workspace_and_metrics():
                 "dynamic_filters_json": frappe.as_json(
                     overdue_dynamic_filters if c["name"] == "Overdue Visits" else common_dynamic_filters
                 ),
-                "is_standard": 1,
+                # avoid marking as Standard during install to bypass validation
+                "is_standard": 0,
                 "is_public": 1,
                 "show_percentage_stats": 1,
                 "stats_time_interval": "Daily",
@@ -215,7 +217,8 @@ def setup_visit_workspace_and_metrics():
             "timeseries": 1,
             "timespan": "Last Month",
             "time_interval": "Daily",
-            "is_standard": 1,
+            # avoid Standard to prevent "Cannot edit Standard charts"
+            "is_standard": 0,
             "is_public": 1,
             "filters_json": "[]",
             "dynamic_filters_json": frappe.as_json([["Visit", "assigned_to", "=", "frappe.session.user"]]),
@@ -252,7 +255,7 @@ def setup_visit_workspace_and_metrics():
             "doctype": "Dashboard",
             "dashboard_name": dash_name,
             "module": "Visit Management",
-            "is_standard": 1,
+            "is_standard": 0,
             "cards": [
                 {"card": "Planned Visits"},
                 {"card": "In Progress Visits"},
@@ -288,7 +291,8 @@ def setup_visit_workspace_and_metrics():
     chb_name = "Visits KPI Panel"
     try:
         # Prefer importing from bundled JSON; if that fails, upsert programmatically
-        import os, json
+        import os
+        import json
         from frappe import get_app_path
         chb_path = os.path.join(
             get_app_path("visit_management"),
@@ -563,7 +567,7 @@ def setup_visit_workspace_and_metrics():
             "title": ws_name,
             "module": "Visit Management",
             "public": 1,
-            "is_standard": 1,
+            "is_standard": 0,
             "icon": "map-pin",
             "content": workspace_content,
             "shortcuts": workspace_shortcuts,
