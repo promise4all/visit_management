@@ -12,6 +12,33 @@ from visit_management.visit_management.settings_utils import (
 
 
 class Visit(Document):
+	def _normalize_geolocation(self):
+		"""Ensure geolocation field is stored as JSON string not a raw dict to avoid pymysql TypeError.
+
+		Frappe's DB layer expects scalar types; a Python dict leaks through if client passes object literal.
+		If value is already a string, leave as-is. If dict with lat/lng keys, serialize via frappe.as_json.
+		"""
+		try:
+			val = self.get("location")
+			if isinstance(val, dict):
+				# minimal sanitization: keep only lat/lng if present
+				payload = {}
+				for k in ("lat", "lng"):
+					if k in val:
+						payload[k] = val[k]
+				if payload:
+					self.set("location", frappe.as_json(payload))
+				else:
+					# empty dict -> clear
+					self.set("location", None)
+		except Exception:
+			pass
+
+	def before_insert(self):
+		self._normalize_geolocation()
+
+	def before_save(self):
+		self._normalize_geolocation()
 	def _auto_create_maintenance_visit_if_needed(self):
 		"""Create a Maintenance Visit if this Visit is for a Customer, purpose is Maintenance,
 		status is Completed, and no Maintenance Visit is linked yet.
@@ -318,6 +345,44 @@ class Visit(Document):
 	def get_client_default_address(self, client_type: str | None = None, client: str | None = None):
 		from .visit import get_client_default_address as _fetch
 		return _fetch(client_type or self.client_type, client or self.client)
+
+
+@whitelist()
+def test_b():
+	"""Test B: create a minimal CRM Lead and a Visit, then delete the Visit.
+
+	Returns a summary dict with created names and deletion status.
+	"""
+	from frappe.utils import now_datetime
+	# Create a simple CRM Lead (person) to link as client
+	lead = frappe.get_doc({
+		"doctype": "CRM Lead",
+		"first_name": "Test",
+		"email": "test@example.com",
+	})
+	lead.insert(ignore_permissions=True)
+
+	# Create a minimal Visit (status Planned) linked to the Lead
+	visit = frappe.get_doc({
+		"doctype": "Visit",
+		"status": "Planned",
+		"scheduled_time": now_datetime(),
+		"assigned_to": "Administrator",
+		"client_type": "CRM Lead",
+		"client": lead.name,
+		"subject": "Follow-up",
+	})
+	visit.insert(ignore_permissions=True)
+	visit_name = visit.name
+
+	# Delete the Visit
+	frappe.delete_doc("Visit", visit_name, ignore_permissions=True)
+
+	return {
+		"lead": lead.name,
+		"visit": visit_name,
+		"visit_deleted": not frappe.db.exists("Visit", visit_name),
+	}
 
 
 @whitelist()

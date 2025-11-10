@@ -1,2 +1,3 @@
 # Database patches
 visit_management.patches.2025_11_04_consolidate_visit_report
+visit_management.patches.2025_11_10_fix_geolocation_serialization
