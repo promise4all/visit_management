@@ -27,9 +27,7 @@ doc_events = {
 }
 
 # Permissions hook pointing to the controller function
-has_permission = {
-    "Visit": "visit_management.visit_management.doctype.visit.visit.has_permission"
-}
+# Removed custom has_permission override to rely fully on standard Frappe permissions
 
 # Scheduler events for automation
 scheduler_events = {

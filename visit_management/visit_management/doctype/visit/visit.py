@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import frappe
-from frappe import whitelist
+from frappe import whitelist, _
 from frappe.model.document import Document
 from frappe.utils import now_datetime
 from visit_management.visit_management.settings_utils import (
@@ -156,9 +156,17 @@ class Visit(Document):
 			return None
 
 	def validate(self):
+		# No approval on Visit; approval is handled in Weekly Schedule
 		# ensure a client is linked (dynamic)
 		if not self.client:
 			frappe.throw("Please set Client.")
+
+		# Restrict cancellation to Sales Manager / System Manager only
+		if self.status == "Cancelled":
+			allowed_cancel_roles = {"Sales Manager", "System Manager"}
+			user_roles = set(frappe.get_roles())
+			if not (user_roles & allowed_cancel_roles):
+				frappe.throw("Only a Sales Manager can cancel a Visit.")
 
 		# enforce outcome when completing
 		if self.status == "Completed" and not self.get("visit_outcome"):
@@ -217,7 +225,7 @@ class Visit(Document):
 		user = self.assigned_to or frappe.session.user
 		emp = frappe.db.get_value("Employee", {"user_id": user}, "name")
 		if not emp:
-			frappe.throw("No Employee linked to user {0}. Please link an Employee to proceed.".format(user))
+			frappe.throw(f"No Employee linked to user {user}. Please link an Employee to proceed.")
 		return emp
 
 	def _ensure_attendance(self, emp: str, when=None):
@@ -298,6 +306,11 @@ class Visit(Document):
 		})
 		ecout.insert(ignore_permissions=True)
 		self.db_set("check_out_time", when)
+		# Mark visit as completed on checkout
+		try:
+			self.db_set("status", "Completed")
+		except Exception:
+			pass
 		att = self._ensure_attendance(emp, when)
 		meta = frappe.get_meta("Attendance")
 		if meta.has_field("out_time"):
