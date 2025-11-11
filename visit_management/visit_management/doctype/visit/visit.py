@@ -386,31 +386,11 @@ def test_b():
 
 
 @whitelist()
-def has_permission(doc, ptype=None, user=None):
-	"""Custom permission: assigned user or system manager gets access in addition to role permissions.
-
-	Note: This function is also whitelisted for optional RPC calls; when invoked via hooks,
-	Frappe will pass a Document instance for `doc`.
-	"""
-	user = user or frappe.session.user
-	if not doc:
-		return False
-	if user == "Administrator":
-		return True
-	try:
-		if getattr(doc, "assigned_to", None) and doc.assigned_to == user:
-			return True
-	except Exception:
-		pass
-	# fallback to role-based permissions
-	return frappe.has_permission(doctype=doc.doctype, ptype=ptype, doc=doc, user=user)
-
-
-@whitelist()
 def has_permission_api(name: str, ptype: str | None = None, user: str | None = None) -> bool:
-	"""RPC-friendly wrapper to check permission by document name."""
+	"""RPC-friendly wrapper using core permission evaluation (no custom override)."""
+	user = user or frappe.session.user
 	doc = frappe.get_doc("Visit", name)
-	return has_permission(doc, ptype=ptype, user=user)
+	return frappe.has_permission(doctype="Visit", ptype=ptype, doc=doc, user=user)
 
 
 @whitelist()

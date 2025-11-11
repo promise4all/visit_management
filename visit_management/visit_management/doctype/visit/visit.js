@@ -5,16 +5,30 @@ frappe.ui.form.on('Visit', {
       frm.set_value('assigned_to', frappe.session.user);
     }
 
-    // If location is empty, try to capture current geolocation (best effort)
-    if (frm.is_new() && !frm.doc.location && navigator.geolocation) {
+    // If an existing Visit has saved location JSON, center map immediately.
+    // Geolocation field in Frappe expects an object {lat,lng} for rendering.
+    if (!frm.is_new() && frm.doc.location) {
+      try {
+        const loc = typeof frm.doc.location === 'string' ? JSON.parse(frm.doc.location) : frm.doc.location;
+        if (loc && typeof loc === 'object' && loc.lat && loc.lng) {
+          // Set the field value to object form (in case it's stored as JSON string) without marking dirty unnecessarily
+          frm.set_value('location', { lat: loc.lat, lng: loc.lng });
+        }
+      } catch (e) {
+        // ignore parse errors
+      }
+    }
+
+    // If new (or existing without location) attempt one-time browser geolocation acquisition.
+    if (navigator.geolocation && !frm.doc.location) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const { latitude, longitude } = pos.coords || {};
-          if (latitude && longitude) {
+          if (latitude && longitude && !frm.doc.location) {
             frm.set_value('location', { lat: latitude, lng: longitude });
           }
         },
-        () => {/* ignore */},
+        () => {/* silently ignore denied/timeout */},
         { enableHighAccuracy: true, maximumAge: 60000, timeout: 8000 }
       );
     }
