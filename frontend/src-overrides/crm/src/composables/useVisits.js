@@ -8,24 +8,25 @@ export function useVisits() {
 
   const list = createResource({
     url: 'frappe.client.get_list',
-    params: () => ({
-      doctype: 'Visit',
-      fields: [
-        'name','status','client_type','client','assigned_to','scheduled_time','check_in_time','check_out_time','visit_duration_minutes'
-      ],
-      order_by: 'modified desc',
-      filters: filters.value,
-      limit_start: pagination.value.start,
-      limit_page_length: pagination.value.page_length,
-    }),
+    makeParams() {
+      return {
+        doctype: 'Visit',
+        fields: [
+          'name','status','client_type','client','assigned_to','scheduled_time','check_in_time','check_out_time','visit_duration_minutes'
+        ],
+        order_by: 'modified desc',
+        filters: filters.value,
+        limit_start: pagination.value.start,
+        limit_page_length: pagination.value.page_length,
+      }
+    },
     auto: true,
-    cache: ['Visit','list', pagination.value.start],
   })
 
   const currentVisitName = ref(null)
   const visit = createResource({
     url: 'frappe.client.get',
-    params: () => ({ doctype: 'Visit', name: currentVisitName.value }),
+    makeParams() { return { doctype: 'Visit', name: currentVisitName.value } },
     auto: false,
     cache: () => currentVisitName.value && ['Visit', currentVisitName.value],
   })

@@ -10,6 +10,9 @@
       </button>
     </div>
     <div v-if="rows.loading" class="text-gray-600">Loading schedule…</div>
+    <div v-else-if="(rows.data || []).length === 0" class="text-gray-600">
+      No weekly schedule found for this week.
+    </div>
     <div v-else class="space-y-2">
       <div v-for="r in rows.data || []" :key="r.name" class="border rounded p-3 flex justify-between items-center">
         <div class="text-sm">
