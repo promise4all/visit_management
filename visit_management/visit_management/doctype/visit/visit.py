@@ -446,3 +446,87 @@ def get_client_default_address(client_type: str, client: str) -> str | None:
 		# Some DB backends may not support child table filtering this way; ignore errors
 		pass
 	return None
+
+
+@whitelist()
+def get_contact_query(doctype, txt, searchfield, start, page_len, filters):
+	"""Filter contacts based on client_type and client from the Visit form.
+	
+	Returns contacts that are linked to the selected client via Dynamic Links.
+	For Customers, also checks the direct customer field in Contact.
+	This ensures only relevant contacts appear in the dropdown.
+	"""
+	# Get client_type and client from filters (passed from form context)
+	client_type = filters.get("client_type")
+	client = filters.get("client")
+	
+	# If no client selected yet, return empty to avoid confusion
+	if not client_type or not client:
+		return []
+	
+	# For Customer doctype, check both Dynamic Link and direct customer field
+	if client_type == "Customer":
+		return frappe.db.sql("""
+			SELECT DISTINCT 
+				c.name, 
+				c.first_name, 
+				c.last_name, 
+				c.email_id, 
+				c.mobile_no
+			FROM `tabContact` c
+			WHERE (
+				EXISTS (
+					SELECT 1 FROM `tabDynamic Link` dl 
+					WHERE dl.parent = c.name 
+						AND dl.parenttype = 'Contact'
+						AND dl.link_doctype = 'Customer'
+						AND dl.link_name = %(client)s
+				)
+				OR (
+					c.customer = %(client)s
+				)
+			)
+			AND (c.name LIKE %(txt)s
+				OR c.first_name LIKE %(txt)s
+				OR c.last_name LIKE %(txt)s
+				OR c.email_id LIKE %(txt)s
+				OR c.mobile_no LIKE %(txt)s)
+			ORDER BY 
+				CASE WHEN c.name LIKE %(txt)s THEN 0 ELSE 1 END,
+				c.first_name
+			LIMIT %(start)s, %(page_len)s
+		""", {
+			"client": client,
+			"txt": f"%{txt}%",
+			"start": start,
+			"page_len": page_len,
+		})
+	
+	# For CRM Lead, CRM Deal, CRM Organization - use Dynamic Link only
+	return frappe.db.sql("""
+		SELECT DISTINCT 
+			c.name, 
+			c.first_name, 
+			c.last_name, 
+			c.email_id, 
+			c.mobile_no
+		FROM `tabContact` c
+		INNER JOIN `tabDynamic Link` dl ON dl.parent = c.name AND dl.parenttype = 'Contact'
+		WHERE dl.link_doctype = %(client_type)s
+			AND dl.link_name = %(client)s
+			AND (c.name LIKE %(txt)s
+				OR c.first_name LIKE %(txt)s
+				OR c.last_name LIKE %(txt)s
+				OR c.email_id LIKE %(txt)s
+				OR c.mobile_no LIKE %(txt)s)
+		ORDER BY 
+			CASE WHEN c.name LIKE %(txt)s THEN 0 ELSE 1 END,
+			c.first_name
+		LIMIT %(start)s, %(page_len)s
+	""", {
+		"client_type": client_type,
+		"client": client,
+		"txt": f"%{txt}%",
+		"start": start,
+		"page_len": page_len,
+	})

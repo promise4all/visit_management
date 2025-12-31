@@ -23,6 +23,23 @@ export function useVisits() {
     auto: true,
   })
 
+  // Total count for ListFooter and native pagination UX
+  const totalCount = createResource({
+    url: 'frappe.client.get_count',
+    makeParams() {
+      return { doctype: 'Visit', filters: filters.value }
+    },
+    auto: true,
+    onSuccess() {
+      // If current page start exceeds new count, reset to first page
+      const count = totalCount.data || 0
+      if (pagination.value.start >= count) {
+        pagination.value.start = 0
+        list.reload()
+      }
+    },
+  })
+
   const currentVisitName = ref(null)
   const visit = createResource({
     url: 'frappe.client.get',
@@ -37,14 +54,15 @@ export function useVisits() {
   }
 
   // Actions
-  const checkIn = createResource({ url: 'run_doc_method', onSuccess() { visit.reload(); list.reload() } })
-  const checkOut = createResource({ url: 'run_doc_method', onSuccess() { visit.reload(); list.reload() } })
-  const createMaintenanceVisit = createResource({ url: 'run_doc_method', onSuccess() { visit.reload() } })
+  const checkIn = createResource({ url: 'frappe.client.run_doc_method', onSuccess() { visit.reload(); list.reload() } })
+  const checkOut = createResource({ url: 'frappe.client.run_doc_method', onSuccess() { visit.reload(); list.reload() } })
+  const createMaintenanceVisit = createResource({ url: 'frappe.client.run_doc_method', onSuccess() { visit.reload() } })
 
   function setFilter(key, value) {
     if (value == null || value === '') delete filters.value[key]
     else filters.value[key] = value
-    list.reload()
+    // Reload list and count to keep footer in sync
+    list.reload(); totalCount.reload()
   }
 
   function nextPage() {
@@ -68,7 +86,7 @@ export function useVisits() {
   })
 
   return {
-    list, visit, loadVisit, filters, setFilter, nextPage, prevPage,
+    list, totalCount, visit, loadVisit, filters, setFilter, nextPage, prevPage,
     checkIn, checkOut, createMaintenanceVisit,
     canCheckIn, canCheckOut,
     pagination,

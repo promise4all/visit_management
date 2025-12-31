@@ -15,6 +15,7 @@
 		{"fieldname": "client_section", "label": "Client", "fieldtype": "Section Break"},
 		{"fieldname": "client_type", "label": "Client Type", "fieldtype": "Select", "options": "CRM Lead\nCRM Deal\nCRM Organization\nCustomer", "reqd": 1},
 		{"fieldname": "client", "label": "Client", "fieldtype": "Dynamic Link", "options": "client_type", "reqd": 1},
+		{"fieldname": "contact", "label": "Contact", "fieldtype": "Link", "options": "Contact", "get_query": "visit_management.visit_management.doctype.visit.visit.get_contact_query"},
 		{"fieldname": "details_section", "label": "Details", "fieldtype": "Section Break"},
 		{"fieldname": "subject", "label": "Purpose", "fieldtype": "Select", "options": "Sales Call\nFollow-up\nDemo\nMaintenance\nCollection\nInspection"},
 		{"fieldname": "notes", "label": "Notes", "fieldtype": "Small Text"},
