@@ -12,7 +12,7 @@ export function useVisits() {
       return {
         doctype: 'Visit',
         fields: [
-          'name','status','client_type','client','assigned_to','scheduled_time','check_in_time','check_out_time','visit_duration_minutes'
+          'name','status','client_type','client','assigned_to','scheduled_time','check_in_time','check_out_time','visit_duration_minutes','docstatus'
         ],
         order_by: 'modified desc',
         filters: filters.value,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from datetime import timedelta
 
 import frappe
@@ -142,3 +143,55 @@ def create_planned_visits(week_start: str | None = None) -> dict:
 
     res = create_visits_for_approved_rows(schedule=schedule_name)
     return res
+
+
+@whitelist()
+def attach_visit_photo(
+    filename: str,
+    filedata,
+    doctype: str,
+    docname: str,
+    fieldname: str | None = None,
+    is_private: int | bool = 0,
+):
+    """Attach a photo to a Visit, accepting data URLs or raw base64.
+
+    This method normalizes the incoming payload to plain base64 and always sets
+    ``decode_base64=True`` when delegating to ``frappe.client.attach_file`` so the
+    content reaches the File doctype as bytes.
+    """
+
+    if not filename or not filedata:
+        frappe.throw(_("Filename and filedata are required."))
+
+    # Normalize to base64 text
+    payload: str
+    if isinstance(filedata, str):
+        if filedata.startswith("data:"):
+            _, _, b64 = filedata.partition(",")
+            payload = b64 or ""
+        else:
+            payload = filedata
+    elif isinstance(filedata, (bytes, bytearray)):
+        payload = base64.b64encode(filedata).decode()
+    else:
+        frappe.throw(_("Unsupported filedata type: {0}").format(type(filedata).__name__))
+
+    if not payload:
+        frappe.throw(_("No file content found."))
+
+    # Attach file using frappe.client.attach_file
+    # This returns {file_url: "...", file_name: "..."}
+    result = frappe.client.attach_file(
+        filename=filename,
+        filedata=payload,
+        doctype=doctype,
+        docname=docname,
+        decode_base64=True,
+    )
+    
+    # If fieldname provided, set it on the document
+    if fieldname:
+        frappe.db.set_value(doctype, docname, fieldname, result.get("file_url"))
+    
+    return result

@@ -12,6 +12,42 @@ from visit_management.visit_management.settings_utils import (
 
 
 class Visit(Document):
+	@classmethod
+	def default_list_data(cls):
+		"""Provide list metadata for CRM ViewControls.
+
+		Matches the fields returned by the frontend list resource to avoid AttributeError
+		in crm.api.doc.get_data.
+		"""
+		return {
+			"columns": [
+				{"label": _("Visit"), "fieldname": "name", "fieldtype": "Link", "options": "Visit"},
+				{"label": _("Client Type"), "fieldname": "client_type", "fieldtype": "Data"},
+				{"label": _("Client"), "fieldname": "client", "fieldtype": "Dynamic Link", "options": "client_type"},
+				{"label": _("Status"), "fieldname": "status", "fieldtype": "Data"},
+				{"label": _("Scheduled Time"), "fieldname": "scheduled_time", "fieldtype": "Datetime"},
+			],
+			"filters": [],
+		}
+	def _sync_photo_field(self, fieldname: str):
+		"""Ensure the photo field is populated from existing File attachments if present."""
+		if self.get(fieldname):
+			return
+		# Prefer files explicitly linked to the field, but fall back to any file on the doc
+		for filters in (
+			{"attached_to_doctype": self.doctype, "attached_to_name": self.name, "attached_to_field": fieldname},
+			{"attached_to_doctype": self.doctype, "attached_to_name": self.name, "attached_to_field": ["is", "not set"]},
+		):
+			existing = frappe.get_all(
+				"File",
+				filters=filters,
+				order_by="creation desc",
+				pluck="file_url",
+				limit=1,
+			)
+			if existing:
+				self.set(fieldname, existing[0])
+				break
 	def _normalize_geolocation(self):
 		"""Ensure geolocation field is stored as JSON string not a raw dict to avoid pymysql TypeError.
 
@@ -39,6 +75,67 @@ class Visit(Document):
 
 	def before_save(self):
 		self._normalize_geolocation()
+		
+		# Auto-submit when status is Completed
+		if self.status == "Completed" and self.docstatus == 0 and not self.flags.get('in_submit'):
+			self.flags.in_submit = True
+			# We'll submit after save in on_update
+
+	def before_submit(self):
+		"""Validate that submission is only allowed when status is Completed."""
+		if self.status != "Completed":
+			frappe.throw(_("Visit can only be submitted when status is Completed."))
+
+	def on_update(self):
+		"""Auto-submit the document when status is set to Completed."""
+		if self.status == "Completed" and self.docstatus == 0 and self.flags.get('in_submit'):
+			self.flags.in_submit = False
+			# Allow auto-submit even if user lacks submit permission; business logic controls when this happens.
+			self.flags.ignore_permissions = True
+			self.submit()
+	
+	def on_cancel(self):
+		"""Handle visit cancellation."""
+		# Set status to Cancelled when document is cancelled
+		self.db_set('status', 'Cancelled', update_modified=False)
+	
+	def on_trash(self):
+		"""Prevent deletion of submitted visits."""
+		if self.docstatus == 1:
+			frappe.throw("Cannot delete a submitted visit. Please cancel it first.")
+	
+	def get_contact_options(self):
+		"""Return contacts filtered by client_type and client for autocomplete"""
+		client_type = self.get("client_type")
+		client = self.get("client")
+		
+		if not client_type or not client:
+			return []
+		
+		# Use Dynamic Link for all client types
+		query = """
+			SELECT DISTINCT 
+				c.name, 
+				c.first_name, 
+				c.last_name
+			FROM `tabContact` c
+			WHERE EXISTS (
+				SELECT 1 FROM `tabDynamic Link` dl 
+				WHERE dl.parent = c.name 
+					AND dl.parenttype = 'Contact'
+					AND dl.link_doctype = %(client_type)s
+					AND dl.link_name = %(client)s
+			)
+			ORDER BY c.first_name, c.last_name
+		"""
+		
+		params = {
+			"client": client,
+			"client_type": client_type,
+		}
+		
+		results = frappe.db.sql(query, params, as_dict=True)
+		return [{"label": r.get("first_name", "") + " " + r.get("last_name", ""), "value": r.name} for r in results]
 	def _auto_create_maintenance_visit_if_needed(self):
 		"""Create a Maintenance Visit if this Visit is for a Customer, purpose is Maintenance,
 		status is Completed, and no Maintenance Visit is linked yet.
@@ -156,13 +253,33 @@ class Visit(Document):
 			return None
 
 	def validate(self):
+		# Skip validations when cancelling
+		if self.docstatus == 1 and self.flags.get('ignore_validate_update_after_submit'):
+			return
+			
+		# Restrict header field modifications when status is not Planned (unless cancelling)
+		if self.status != "Planned" and not self.is_new() and self.docstatus != 2:
+			old_doc = self.get_doc_before_save()
+			if old_doc:
+				# Define header fields that cannot be modified after status changes from Planned
+				# Note: scheduled_time is allowed to be adjusted even after visit starts
+				header_fields = {
+					'assigned_to', 'client_type', 'client',
+					'contact', 'subject', 'address', 'visit_brief'
+				}
+				changed_fields = {field for field in header_fields 
+								  if self.get(field) != old_doc.get(field)}
+				
+				if changed_fields:
+					frappe.throw(f"Cannot modify header fields ({', '.join(changed_fields)}) when visit status is not 'Planned'.")
+		
 		# No approval on Visit; approval is handled in Weekly Schedule
 		# ensure a client is linked (dynamic)
 		if not self.client:
 			frappe.throw("Please set Client.")
 
-		# Restrict cancellation to Sales Manager / System Manager only
-		if self.status == "Cancelled":
+		# Restrict cancellation to Sales Manager / System Manager only (only when setting status to Cancelled manually)
+		if self.status == "Cancelled" and self.docstatus != 2:
 			allowed_cancel_roles = {"Sales Manager", "System Manager"}
 			user_roles = set(frappe.get_roles())
 			if not (user_roles & allowed_cancel_roles):
@@ -212,17 +329,33 @@ class Visit(Document):
 		except Exception:
 			pass
 
-		# enforce report content upon completion
-		if self.status == "Completed" and not self.get("report_summary"):
-			frappe.throw("Report Summary is required upon completion of a Visit.")
+		# enforce report content upon completion - at least one field must be filled
+		if self.status == "Completed":
+			required_fields = [
+				"additional_notes",
+				"competitor_info",
+				"existing_fleet",
+				"requirements_received",
+				"future_prospects",
+				"product_target",
+				"customer_feedback",
+				"report_attachment"
+			]
+			if not any(self.get(field) for field in required_fields):
+				frappe.throw(
+					"At least one of the following fields must be filled before marking visit as completed: "
+					"Additional Notes, Competitor Information, Existing Fleet Information, "
+					"Any Requirements Received, Future Prospects, Potential Product Target, "
+					"Customer Feedback, or Report Attachment."
+				)
 	
 	# Attendance integration: Check-in/Check-out
 	def _get_employee(self) -> str:
-		"""Resolve Employee for the visit: prefer assigned_to's employee, else session user.
+		"""Resolve Employee for the visit: use current logged-in user.
 
 		Returns Employee name or throws if not found.
 		"""
-		user = self.assigned_to or frappe.session.user
+		user = frappe.session.user
 		emp = frappe.db.get_value("Employee", {"user_id": user}, "name")
 		if not emp:
 			frappe.throw(f"No Employee linked to user {user}. Please link an Employee to proceed.")
@@ -249,12 +382,82 @@ class Visit(Document):
 		return att
 
 	@whitelist()
-	def check_in(self):
-		"""Create Employee Checkin (IN) and set check_in_time; ensure Attendance."""
+	def check_in(self, photo_data=None, photo_filename=None, location=None):
+		"""Create Employee Checkin (IN), attach photo (if provided), set fields, and save once.
+		
+		Also captures location if provided in form context.
+		"""
 		if self.check_in_time:
 			frappe.throw("Already checked in.")
+
+		# Optional: attach photo provided by client in the same request to avoid version mismatch
+		photo_data = photo_data or frappe.form_dict.get("photo_data")
+		photo_filename = photo_filename or frappe.form_dict.get("photo_filename") or "check_in_photo.jpg"
+		_attach_attempted = bool(photo_data)
+		_attach_error = None
+		if photo_data:
+			try:
+				payload = photo_data
+				if isinstance(payload, str) and payload.startswith("data:"):
+					_, _, payload = payload.partition(",")
+
+				from frappe.utils.file_manager import save_file
+				result = save_file(
+					fname=photo_filename,
+					content=payload,
+					dt=self.doctype,
+					dn=self.name,
+					decode=True,
+					is_private=1,
+					df="check_in_photo",
+				)
+				# Only after successful attach, prune older attachments to avoid duplicates
+				if result and getattr(result, "name", None):
+					existing_files = frappe.get_all(
+						"File",
+						filters={
+							"attached_to_doctype": self.doctype,
+							"attached_to_name": self.name,
+							"attached_to_field": ["in", ["check_in_photo", None, ""]],
+							"name": ["!=", result.name],
+						},
+						pluck="name",
+					)
+					for fname in existing_files:
+						frappe.delete_doc("File", fname, ignore_permissions=True)
+
+				self.check_in_photo = getattr(result, "file_url", None) or self.check_in_photo
+			except Exception as e:
+				_attach_error = frappe.utils.cstr(e)
+				frappe.log_error(_attach_error, "Visit Check-in Photo Attach Error")
+
+		# Ensure field is hydrated from existing attachments before validating
+		self._sync_photo_field("check_in_photo")
+
+		# Validate required photo after attempting attach
 		if is_photo_required(checkout=False) and not self.get("check_in_photo"):
-			frappe.throw("Attendance photo is required for Check-in.")
+			if _attach_attempted:
+				frappe.throw("Failed to attach photo for Check-in. Please retry.")
+			else:
+				frappe.throw("Attendance photo is required for Check-in.")
+		
+		# Capture location from form_dict if provided (from browser geolocation)
+		location_data = location or frappe.form_dict.get("location")
+		location_obj = None
+		if location_data and not self.get("check_in_location"):
+			try:
+				import json
+				if isinstance(location_data, str):
+					location_obj = json.loads(location_data)
+				else:
+					location_obj = location_data
+				
+				if isinstance(location_obj, dict) and location_obj.get("lat") and location_obj.get("lng"):
+					# Format as readable text with coordinates
+					self.check_in_location = f"Latitude: {location_obj['lat']}, Longitude: {location_obj['lng']}"
+			except Exception:
+				pass  # Silently ignore location errors
+		
 		emp = self._get_employee()
 		when = now_datetime()
 		# Employee Checkin (HRMS)
@@ -266,19 +469,30 @@ class Visit(Document):
 			"device_id": "Visit",
 			"skip_auto_attendance": 0,
 		})
+		# Attach location to Employee Checkin if available
+		if location_obj and isinstance(location_obj, dict):
+			if location_obj.get("lat"):
+				ecin.latitude = location_obj["lat"]
+			if location_obj.get("lng"):
+				ecin.longitude = location_obj["lng"]
 		ecin.insert(ignore_permissions=True)
-		# Update visit and attendance
-		self.db_set("check_in_time", when)
+		
+		# Update visit fields in memory (not db_set to avoid version conflicts)
+		self.check_in_time = when
+		self.status = "In Progress"
+		
+		# Log entry
+		self.append("visit_logs", {"timestamp": when, "activity": "Check-in", "user": frappe.session.user})
+		
+		# Save document once with all changes
+		self.save(ignore_permissions=True)
+		
+		# Update attendance
 		att = self._ensure_attendance(emp, when)
 		meta = frappe.get_meta("Attendance")
 		if meta.has_field("in_time") and not att.get("in_time"):
 			att.db_set("in_time", when)
-		# Log entry
-		try:
-			self.append("visit_logs", {"timestamp": when, "activity": "Check-in", "user": frappe.session.user})
-			self.save(ignore_permissions=True)
-		except Exception:
-			pass
+		
 		return {
 			"employee": emp,
 			"check_in_time": when,
@@ -286,14 +500,81 @@ class Visit(Document):
 		}
 
 	@whitelist()
-	def check_out(self):
-		"""Create Employee Checkin (OUT) and set check_out_time; update Attendance."""
+	def check_out(self, photo_data=None, photo_filename=None, location=None):
+		"""Create Employee Checkin (OUT), attach photo (if provided), set fields, and save once."""
 		if not self.check_in_time:
 			frappe.throw("Check-in first before checking out.")
 		if self.check_out_time:
 			frappe.throw("Already checked out.")
+
+		# Optional: attach photo provided by client in the same request
+		photo_data = photo_data or frappe.form_dict.get("photo_data")
+		photo_filename = photo_filename or frappe.form_dict.get("photo_filename") or "check_out_photo.jpg"
+		_attach_attempted = bool(photo_data)
+		_attach_error = None
+		if photo_data:
+			try:
+				payload = photo_data
+				if isinstance(payload, str) and payload.startswith("data:"):
+					_, _, payload = payload.partition(",")
+
+				from frappe.utils.file_manager import save_file
+				result = save_file(
+					fname=photo_filename,
+					content=payload,
+					dt=self.doctype,
+					dn=self.name,
+					decode=True,
+					is_private=1,
+					df="check_out_photo",
+				)
+				# Only after successful attach, prune older attachments to avoid duplicates
+				if result and getattr(result, "name", None):
+					existing_files = frappe.get_all(
+						"File",
+						filters={
+							"attached_to_doctype": self.doctype,
+							"attached_to_name": self.name,
+							"attached_to_field": ["in", ["check_out_photo", None, ""]],
+							"name": ["!=", result.name],
+						},
+						pluck="name",
+					)
+					for fname in existing_files:
+						frappe.delete_doc("File", fname, ignore_permissions=True)
+
+				self.check_out_photo = getattr(result, "file_url", None) or self.check_out_photo
+			except Exception as e:
+				_attach_error = frappe.utils.cstr(e)
+				frappe.log_error(_attach_error, "Visit Check-out Photo Attach Error")
+
+		# Ensure field is hydrated from existing attachments before validating
+		self._sync_photo_field("check_out_photo")
+
+		# Validate required photo after attempting attach
 		if is_photo_required(checkout=True) and not self.get("check_out_photo"):
-			frappe.throw("Attendance photo is required for Check-out.")
+			if _attach_attempted:
+				frappe.throw("Failed to attach photo for Check-out. Please retry.")
+			else:
+				frappe.throw("Attendance photo is required for Check-out.")
+		
+		# Capture location from form_dict if provided (from browser geolocation)
+		location_data = location or frappe.form_dict.get("location")
+		location_obj = None
+		if location_data and not self.get("check_out_location"):
+			try:
+				import json
+				if isinstance(location_data, str):
+					location_obj = json.loads(location_data)
+				else:
+					location_obj = location_data
+				
+				if isinstance(location_obj, dict) and location_obj.get("lat") and location_obj.get("lng"):
+					# Format as readable text with coordinates
+					self.check_out_location = f"Latitude: {location_obj['lat']}, Longitude: {location_obj['lng']}"
+			except Exception:
+				pass  # Silently ignore location errors
+		
 		emp = self._get_employee()
 		when = now_datetime()
 		ecout = frappe.get_doc({
@@ -304,32 +585,36 @@ class Visit(Document):
 			"device_id": "Visit",
 			"skip_auto_attendance": 0,
 		})
+		# Attach location to Employee Checkin if available
+		if location_obj and isinstance(location_obj, dict):
+			if location_obj.get("lat"):
+				ecout.latitude = location_obj["lat"]
+			if location_obj.get("lng"):
+				ecout.longitude = location_obj["lng"]
 		ecout.insert(ignore_permissions=True)
-		self.db_set("check_out_time", when)
-		# Mark visit as completed on checkout
-		try:
-			self.db_set("status", "Completed")
-		except Exception:
-			pass
+		
+		# Update visit fields in memory (not db_set to avoid version conflicts)
+		self.check_out_time = when
+		self.status = "Completed"
+		
+		# Compute visit duration
+		if self.check_in_time and self.check_out_time:
+			# Convert to datetime objects if they are strings
+			start = frappe.utils.get_datetime(self.check_in_time)
+			end = frappe.utils.get_datetime(self.check_out_time)
+			mins = max(0, int((end - start).total_seconds() // 60))
+			self.visit_duration_minutes = mins
+		
+		# Log entry
+		self.append("visit_logs", {"timestamp": when, "activity": "Check-out", "user": frappe.session.user})
+		
+		# Save document once with all changes
+		self.save(ignore_permissions=True)
+		
 		att = self._ensure_attendance(emp, when)
 		meta = frappe.get_meta("Attendance")
 		if meta.has_field("out_time"):
 			att.db_set("out_time", when)
-		# compute and persist duration
-		try:
-			if self.get("check_in_time") and self.get("check_out_time"):
-				start = self.get("check_in_time")
-				end = self.get("check_out_time")
-				mins = max(0, int((end - start).total_seconds() // 60))
-				self.db_set("visit_duration_minutes", mins)
-		except Exception:
-			pass
-		# Log entry
-		try:
-			self.append("visit_logs", {"timestamp": when, "activity": "Check-out", "user": frappe.session.user})
-			self.save(ignore_permissions=True)
-		except Exception:
-			pass
 		return {
 			"employee": emp,
 			"check_out_time": when,
@@ -450,83 +735,166 @@ def get_client_default_address(client_type: str, client: str) -> str | None:
 
 @whitelist()
 def get_contact_query(doctype, txt, searchfield, start, page_len, filters):
-	"""Filter contacts based on client_type and client from the Visit form.
+	"""Filter contacts based on client_type and client from the form.
 	
-	Returns contacts that are linked to the selected client via Dynamic Links.
-	For Customers, also checks the direct customer field in Contact.
-	This ensures only relevant contacts appear in the dropdown.
+	Frappe passes current form values in filters dict.
+	Returns contacts linked to the selected client.
 	"""
-	# Get client_type and client from filters (passed from form context)
-	client_type = filters.get("client_type")
-	client = filters.get("client")
+	import json
 	
-	# If no client selected yet, return empty to avoid confusion
+	client_type = None
+	client = None
+	
+	# Parse filters - can be JSON string or dict
+	try:
+		if isinstance(filters, str):
+			if filters.startswith('['):
+				# Array format: [ ["field", "operator", "value"] ]
+				filters_array = json.loads(filters)
+				for f in filters_array:
+					if isinstance(f, list) and len(f) >= 3:
+						if f[0] == "client_type":
+							client_type = f[2]
+						elif f[0] == "client":
+							client = f[2]
+			else:
+				# Object format
+				filters_obj = json.loads(filters)
+				client_type = filters_obj.get("client_type")
+				client = filters_obj.get("client")
+		elif isinstance(filters, dict):
+			client_type = filters.get("client_type")
+			client = filters.get("client")
+	except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
+		pass
+	
+	# If no filters, try to get from form context
+	if not client_type or not client:
+		client_type = frappe.form_dict.get("client_type")
+		client = frappe.form_dict.get("client")
+	
+	# Empty result if no client selected
 	if not client_type or not client:
 		return []
 	
-	# For Customer doctype, check both Dynamic Link and direct customer field
-	if client_type == "Customer":
-		return frappe.db.sql("""
-			SELECT DISTINCT 
-				c.name, 
-				c.first_name, 
-				c.last_name, 
-				c.email_id, 
-				c.mobile_no
-			FROM `tabContact` c
-			WHERE (
-				EXISTS (
-					SELECT 1 FROM `tabDynamic Link` dl 
-					WHERE dl.parent = c.name 
-						AND dl.parenttype = 'Contact'
-						AND dl.link_doctype = 'Customer'
-						AND dl.link_name = %(client)s
-				)
-				OR (
-					c.customer = %(client)s
-				)
-			)
-			AND (c.name LIKE %(txt)s
-				OR c.first_name LIKE %(txt)s
-				OR c.last_name LIKE %(txt)s
-				OR c.email_id LIKE %(txt)s
-				OR c.mobile_no LIKE %(txt)s)
-			ORDER BY 
-				CASE WHEN c.name LIKE %(txt)s THEN 0 ELSE 1 END,
-				c.first_name
-			LIMIT %(start)s, %(page_len)s
-		""", {
-			"client": client,
-			"txt": f"%{txt}%",
-			"start": start,
-			"page_len": page_len,
-		})
-	
-	# For CRM Lead, CRM Deal, CRM Organization - use Dynamic Link only
-	return frappe.db.sql("""
-		SELECT DISTINCT 
-			c.name, 
-			c.first_name, 
-			c.last_name, 
-			c.email_id, 
-			c.mobile_no
+	# Build query using Dynamic Link for all client types
+	query = """
+		SELECT DISTINCT c.name
 		FROM `tabContact` c
-		INNER JOIN `tabDynamic Link` dl ON dl.parent = c.name AND dl.parenttype = 'Contact'
-		WHERE dl.link_doctype = %(client_type)s
+		WHERE EXISTS (
+			SELECT 1 FROM `tabDynamic Link` dl 
+			WHERE dl.parent = c.name 
+			AND dl.parenttype = 'Contact'
+			AND dl.link_doctype = %(client_type)s
 			AND dl.link_name = %(client)s
-			AND (c.name LIKE %(txt)s
-				OR c.first_name LIKE %(txt)s
-				OR c.last_name LIKE %(txt)s
-				OR c.email_id LIKE %(txt)s
-				OR c.mobile_no LIKE %(txt)s)
-		ORDER BY 
-			CASE WHEN c.name LIKE %(txt)s THEN 0 ELSE 1 END,
-			c.first_name
-		LIMIT %(start)s, %(page_len)s
-	""", {
-		"client_type": client_type,
+		)
+	"""
+	
+	# Add search
+	if txt:
+		query += """ AND (c.name LIKE %(txt)s OR c.first_name LIKE %(txt)s OR c.last_name LIKE %(txt)s)"""
+	
+	query += """ LIMIT %(start)s, %(page_len)s"""
+	
+	params = {
 		"client": client,
-		"txt": f"%{txt}%",
-		"start": start,
-		"page_len": page_len,
-	})
+		"client_type": client_type,
+		"txt": f"%{txt}%" if txt else "%",
+		"start": int(start),
+		"page_len": int(page_len),
+	}
+	
+	return frappe.db.sql(query, params)
+
+
+@whitelist()
+def get_filtered_contacts(client_type, client):
+	"""Simple method to get contacts filtered by client_type and client.
+	
+	Can be called directly from the form via frappe.call when client/client_type changes.
+	"""
+	if not client_type or not client:
+		return []
+	
+	# Use Dynamic Link for all client types
+	query = """
+		SELECT DISTINCT c.name
+		FROM `tabContact` c
+		WHERE EXISTS (
+			SELECT 1 FROM `tabDynamic Link` dl 
+			WHERE dl.parent = c.name 
+			AND dl.parenttype = 'Contact'
+			AND dl.link_doctype = %(client_type)s
+			AND dl.link_name = %(client)s
+		)
+		ORDER BY c.name
+	"""
+	
+	params = {
+		"client": client,
+		"client_type": client_type,
+	}
+	
+	results = frappe.db.sql(query, params)
+	return [r[0] for r in results]
+
+@whitelist()
+def get_address_query(doctype, txt, searchfield, start, page_len, filters):
+	"""Filter addresses based on client_type and client from the form.
+	
+	Returns addresses linked to the selected client via Dynamic Links.
+	"""
+	import json
+	
+	client_type = None
+	client = None
+	
+	# Parse filters - can be JSON string or dict
+	try:
+		if isinstance(filters, str):
+			filters_obj = json.loads(filters)
+			client_type = filters_obj.get("client_type")
+			client = filters_obj.get("client")
+		elif isinstance(filters, dict):
+			client_type = filters.get("client_type")
+			client = filters.get("client")
+	except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
+		pass
+	
+	# If no filters, try to get from form context
+	if not client_type or not client:
+		client_type = frappe.form_dict.get("client_type")
+		client = frappe.form_dict.get("client")
+	
+	# Empty result if no client selected
+	if not client_type or not client:
+		return []
+	
+	# Build query using Dynamic Link
+	query = """
+		SELECT DISTINCT a.name
+		FROM `tabAddress` a
+		WHERE EXISTS (
+			SELECT 1 FROM `tabDynamic Link` dl 
+			WHERE dl.parent = a.name 
+			AND dl.parenttype = 'Address'
+			AND dl.link_doctype = %(client_type)s
+			AND dl.link_name = %(client)s
+		)
+	"""
+	
+	# Add search
+	if txt:
+		query += """ AND (a.name LIKE %(txt)s OR a.address_title LIKE %(txt)s OR a.city LIKE %(txt)s)"""
+	
+	query += """ LIMIT %(start)s, %(page_len)s"""
+	
+	params = {
+		"client": client,
+		"client_type": client_type,
+		"txt": f"%{txt}%" if txt else "%",
+		"start": int(start),
+		"page_len": int(page_len),
+	}
+	
+	return frappe.db.sql(query, params)

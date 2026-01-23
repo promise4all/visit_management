@@ -12,14 +12,7 @@
       </template>
     </LayoutHeader>
 
-    <!-- Native CRM ViewControls: shows Header actions and standard filters -->
-    <ViewControls
-      class="mx-3 sm:mx-5"
-      :doctype="'Visit'"
-      :options="{ allowedViews: ['list'] }"
-    />
-
-    <div v-if="list.loading" class="text-ink-gray-5">{{ __('Loading…') }}</div>
+    <div v-if="list.loading" class="text-ink-gray-5 mx-3 sm:mx-5">{{ __('Loading…') }}</div>
     <div v-else>
       <template v-if="list.error">
         <div class="mx-3 sm:mx-5">
@@ -41,10 +34,10 @@
           :columns="columns"
           :rows="rows"
           :options="{
-            getRowRoute: (row) => ({ name: 'Visit', params: { visitId: row.name } }),
             selectable: true,
             showTooltip: false,
             resizeColumn: false,
+            onRowClick: (row) => showVisit(row.name),
           }"
           row-key="name"
           v-model="list"
@@ -64,7 +57,7 @@
             <template #prefix>
               <ArrowUpRightIcon v-if="column.key === 'name'" class="h-4 w-4 text-ink-gray-5" />
               <AvatarIcon v-else-if="column.key === 'client'" class="h-4 w-4 text-ink-gray-5" />
-              <IndicatorIcon v-else-if="column.key === 'status'" :class="getStatusColor(item.columns[column.key].label)" />
+              <IndicatorIcon v-else-if="column.key === 'status' && item && item.columns" :class="getStatusColor(item.columns[column.key].label)" />
             </template>
             <template #default="{ label }">
               <div class="truncate text-base">
@@ -84,17 +77,30 @@
       </template>
     </div>
   </div>
+  <VisitDetailModal
+    v-model="showVisitDetailModal"
+    v-model:visit="visitDetail"
+    @checkIn="handleCheckIn"
+    @checkOut="handleCheckOut"
+  />
 </template>
 
 <script setup>
 import { ref, watch, computed } from 'vue'
+import { createResource, Button } from 'frappe-ui'
 import { useVisits } from '@/composables/useVisits'
 import ListRows from '@/components/ListViews/ListRows.vue'
 import { Select as FSelect, ListView, ListHeader, ListHeaderItem, ListRowItem, ListFooter, Tooltip } from 'frappe-ui'
-import ViewControls from '@/components/ViewControls.vue'
+import LayoutHeader from '@/components/LayoutHeader.vue'
+import ViewBreadcrumbs from '@/components/ViewBreadcrumbs.vue'
 import AvatarIcon from '@/components/Icons/AvatarIcon.vue'
 import IndicatorIcon from '@/components/Icons/IndicatorIcon.vue'
+import ArrowUpRightIcon from '@/components/Icons/ArrowUpRightIcon.vue'
 import ListBulkActions from '@/components/ListBulkActions.vue'
+import VisitDetailModal from '@/components/Modals/VisitDetailModal.vue'
+
+const showVisitDetailModal = ref(false)
+const visitDetail = ref({})
 
 const statusOptions = [
   { label: __('All'), value: '' },
@@ -104,7 +110,7 @@ const statusOptions = [
   { label: __('Cancelled'), value: 'Cancelled' },
 ]
 
-const { list, totalCount, setFilter, nextPage, prevPage, pagination } = useVisits()
+const { list, totalCount, setFilter, nextPage, prevPage, pagination, checkIn, checkOut } = useVisits()
 const status = ref('')
 const pageLength = ref(20)
 
@@ -122,9 +128,42 @@ watch(pageLength, (val, old) => {
   if (totalCount?.reload) totalCount.reload()
 })
 
-function goTo(name) {
-  // Navigate to Visit detail using the named route
-  window.location.href = `/crm/visits/${encodeURIComponent(name)}`
+function showVisit(name) {
+  showVisitDetailModal.value = true
+  visitDetail.value = createResource({
+    url: 'frappe.client.get',
+    params: { doctype: 'Visit', name },
+    cache: ['visit', name],
+    auto: true,
+  })
+}
+
+async function handleCheckIn(visitName) {
+  try {
+    await checkIn.submit({
+      dt: 'Visit',
+      dn: visitName,
+      method: 'check_in',
+    })
+    visitDetail.value.reload()
+    list.reload()
+  } catch (e) {
+    console.error('Check-in failed:', e)
+  }
+}
+
+async function handleCheckOut(visitName) {
+  try {
+    await checkOut.submit({
+      dt: 'Visit',
+      dn: visitName,
+      method: 'check_out',
+    })
+    visitDetail.value.reload()
+    list.reload()
+  } catch (e) {
+    console.error('Check-out failed:', e)
+  }
 }
 
 function getStatusColor(status) {
@@ -148,7 +187,7 @@ const columns = [
 
 // Map backend list data to ListView row+column shape
 const rows = computed(() => {
-  const data = list.data || []
+  const data = (list.data || []).filter(Boolean)
   return data.map((v) => ({
     name: v.name,
     columns: {
